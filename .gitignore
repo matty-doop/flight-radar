@@ -1,0 +1,7 @@
+node_modules/
+airports.csv
+routes.csv.gz
+routes-cache.json
+watch.json
+.claude/
+dist/

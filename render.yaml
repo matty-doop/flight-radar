@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: flight-radar
+    runtime: node
+    plan: free
+    buildCommand: "true"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_PASSWORD
+        sync: false
