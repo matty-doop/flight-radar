@@ -59,7 +59,7 @@ function drawPaths(shown) {
     const here = [ac.lat, ac.lon];
     const trail = (w.trail || []).concat([here]);
     const dash = { color, weight: 2, opacity: sel ? .7 : .55, dashArray: '1 7', lineCap: 'round', interactive: false };
-    pathLayer.addLayer(L.polyline(trail, { color, weight: sel ? 4.5 : 3.5, opacity: 1, interactive: false }));
+    pathLayer.addLayer(L.polyline(trail, { color, weight: sel ? 3 : 1.5, opacity: sel ? 1 : .75, interactive: false }));
     if (w.phase !== 'arrived') pathLayer.addLayer(L.polyline(gcLine(here, [w.dest.lat, w.dest.lon]), dash));
     for (const a of [w.orig, w.dest]) if (!apt || a.icao !== apt.icao) ends.set(a.icao, a);
   }
