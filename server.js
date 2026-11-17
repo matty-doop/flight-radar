@@ -1,5 +1,5 @@
 // Local flight tracker server. No dependencies, no API keys.
-// Live positions: adsb.lol (fallback adsb.fi) - community ADS-B feeds, free and open.
+// Live positions: adsb.fi (fallback adsb.lol) - community ADS-B feeds, free and open.
 // Routes/airports: adsb.lol's public copy of the VRS standing-data set.
 const http = require('http');
 const fs = require('fs');
@@ -48,8 +48,52 @@ function saveCacheSoon() {
 async function getJson(url, timeoutMs = 12000) {
   const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(timeoutMs) });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
+  if (!res.ok) {
+    const err = new Error(`${res.status} from ${new URL(url).host}`);
+    err.status = res.status; err.headers = res.headers;
+    throw err;
+  }
   return res.json();
+}
+
+// ---------- live data sources ----------
+// adsb.fi asks for no more than one request a second. adsb.lol now allows only 500 requests
+// a day without a key, so it is the backup. A source that says "too many requests" is left
+// alone until it says it will accept requests again.
+const LIVE = [
+  { name: 'adsb.fi', gap: 1100, nextAt: 0, blockedUntil: 0,
+    point: (lat, lon, d) => `https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/${d}`,
+    callsign: list => `https://opendata.adsb.fi/api/v2/callsign/${list}` },
+  { name: 'adsb.lol', gap: 1100, nextAt: 0, blockedUntil: 0,
+    point: (lat, lon, d) => `https://api.adsb.lol/v2/point/${lat}/${lon}/${d}`,
+    callsign: list => `https://api.adsb.lol/v2/callsign/${list}` },
+];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function liveFetch(kind, ...args) {
+  let lastErr = null;
+  for (const src of LIVE) {
+    if (Date.now() < src.blockedUntil) continue;
+    const wait = Math.max(0, src.nextAt - Date.now());
+    src.nextAt = Math.max(src.nextAt, Date.now()) + src.gap;
+    if (wait > 8000) continue; // too busy right now; try the other source
+    if (wait) await sleep(wait);
+    try {
+      const j = await getJson(src[kind](...args));
+      return { source: src.name, j: j || {} };
+    } catch (e) {
+      lastErr = e;
+      if (e.status === 429) {
+        const h = e.headers;
+        const secs = Number(h && (h.get('retry-after') || h.get('x-ratelimit-reset'))) || 300;
+        src.blockedUntil = Date.now() + Math.min(secs, 86400) * 1000;
+        console.log(`${src.name} says too many requests; resting it for ${Math.round(Math.min(secs, 86400) / 60)} min`);
+      } else {
+        src.blockedUntil = Date.now() + 30e3;
+      }
+    }
+  }
+  if (!lastErr) throw new Error('both live data sources are resting after too many requests; retrying shortly');
+  throw lastErr;
 }
 
 const slimAirport = a => a && ({
@@ -89,14 +133,8 @@ async function getAircraft(lat, lon, dist) {
   const key = `${lat.toFixed(2)},${lon.toFixed(2)},${dist}`;
   const hit = acCache.get(key);
   if (hit && Date.now() - hit.t < 2500) return hit.body;
-  let body;
-  try {
-    const j = await getJson(`https://api.adsb.lol/v2/point/${lat}/${lon}/${dist}`);
-    body = { source: 'adsb.lol', now: j.now, ac: j.ac || [] };
-  } catch (e) {
-    const j = await getJson(`https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/${dist}`);
-    body = { source: 'adsb.fi', now: j.now, ac: j.aircraft || j.ac || [] };
-  }
+  const { source, j } = await liveFetch('point', lat, lon, dist);
+  const body = { source, now: j.now, ac: j.aircraft || j.ac || [] };
   acCache.set(key, { t: Date.now(), body });
   if (acCache.size > 50) acCache.delete(acCache.keys().next().value);
   return body;
@@ -228,10 +266,10 @@ async function pollWatcher(w) {
   const chunk = w.list.slice(w.cursor, w.cursor + CHUNK);
   w.cursor += CHUNK;
   try {
-    const j = await getJson(`https://api.adsb.lol/v2/callsign/${chunk.map(r => r.cs).join(',')}`);
-    w.error = null; w.source = 'adsb.lol';
+    const { source, j } = await liveFetch('callsign', chunk.map(r => r.cs).join(','));
+    w.error = null; w.source = source;
     const now = Date.now();
-    for (const ac of j.ac || []) {
+    for (const ac of j.ac || j.aircraft || []) {
       const cs = (ac.flight || '').trim(), route = w.byCs.get(cs);
       if (!route || ac.lat == null || (ac.seen_pos ?? 0) > 90) continue;
       const f = updateFlight(w, ac, route, now);
