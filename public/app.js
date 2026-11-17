@@ -92,13 +92,15 @@ function setFix(m, ac) {
   }
 }
 function guess(f, now) {
-  // taxiing planes turn often, so they are only carried forward for a few seconds
-  let dt = Math.min(f.gnd ? 6 : MAX_GUESS_S, Math.max(0, (now - f.t) / 1000));
+  // taxiing planes turn and slow down often, so they are carried forward for only a few
+  // seconds and at a bit under their last speed, to avoid overshooting
+  let dt = Math.min(f.gnd ? 5 : MAX_GUESS_S, Math.max(0, (now - f.t) / 1000));
   if (f.gs < (f.gnd ? 3 : 30) || !dt) return [f.lat, f.lon]; // parked or barely moving: leave it where it is
+  const gs = f.gnd ? f.gs * 0.7 : f.gs;
   let lat = f.lat, lon = f.lon, trk = f.trk;
   const step = 1, turnFor = 20; // follow a turn for at most 20 s
   for (let s = 0; s < dt; s += step) {
-    const h = Math.min(step, dt - s), nm = f.gs * h / 3600, k = rad(trk);
+    const h = Math.min(step, dt - s), nm = gs * h / 3600, k = rad(trk);
     lat += nm / 60 * Math.cos(k);
     lon += nm / 60 * Math.sin(k) / Math.cos(rad(lat));
     if (s < turnFor) trk += f.rate * h;
