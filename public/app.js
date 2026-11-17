@@ -69,6 +69,55 @@ function drawPaths(shown) {
   }
 }
 
+// ---------- smooth movement between updates ----------
+// Between real position reports each plane is moved along its last known track and speed
+// (following its turn, if it was turning). When a new report arrives the plane eases onto
+// it over a moment instead of jumping.
+const EASE_MS = 1500, MAX_GUESS_S = 45;
+function fixTime(ac) {
+  const at = ac._w ? ac._w.t : ac._rx || Date.now();
+  return at - (ac.seen_pos ?? 0) * 1000;
+}
+function setFix(m, ac) {
+  const f = m._drFix;
+  if (f && f.lat === ac.lat && f.lon === ac.lon) return; // nothing new
+  const now = Date.now(), before = f ? placeOf(m, now) : null;
+  m._drFix = { lat: ac.lat, lon: ac.lon, t: fixTime(ac), gs: ac.gs || 0, trk: trackOf(ac), gnd: onGround(ac),
+             rate: Math.max(-3, Math.min(3, ac.track_rate || 0)) };
+  m._drEase = null;
+  if (before) {
+    const p = guess(m._drFix, now);
+    const dlat = before[0] - p[0], dlon = before[1] - p[1];
+    if (Math.abs(dlat) < 0.5 && Math.abs(dlon) < 0.5) m._drEase = { dlat, dlon, t: now }; // big gaps just jump
+  }
+}
+function guess(f, now) {
+  // taxiing planes turn often, so they are only carried forward for a few seconds
+  let dt = Math.min(f.gnd ? 6 : MAX_GUESS_S, Math.max(0, (now - f.t) / 1000));
+  if (f.gs < (f.gnd ? 3 : 30) || !dt) return [f.lat, f.lon]; // parked or barely moving: leave it where it is
+  let lat = f.lat, lon = f.lon, trk = f.trk;
+  const step = 1, turnFor = 20; // follow a turn for at most 20 s
+  for (let s = 0; s < dt; s += step) {
+    const h = Math.min(step, dt - s), nm = f.gs * h / 3600, k = rad(trk);
+    lat += nm / 60 * Math.cos(k);
+    lon += nm / 60 * Math.sin(k) / Math.cos(rad(lat));
+    if (s < turnFor) trk += f.rate * h;
+  }
+  return [lat, lon];
+}
+function placeOf(m, now) {
+  const p = guess(m._drFix, now), o = m._drEase;
+  if (!o) return p;
+  const k = 1 - (now - o.t) / EASE_MS;
+  if (k <= 0) { m._drEase = null; return p; }
+  return [p[0] + o.dlat * k, p[1] + o.dlon * k];
+}
+setInterval(() => {
+  if (document.hidden) return;
+  const now = Date.now();
+  for (const m of markers.values()) if (m._drFix) m.setLatLng(placeOf(m, now));
+}, 200);
+
 // ---------- geo helpers ----------
 const R_NM = 3440.065, rad = d => d * Math.PI / 180, deg = r => r * 180 / Math.PI;
 function distNm(a, b, c, d) {
@@ -175,8 +224,8 @@ async function poll() {
       // parked at the gate with no flight number set, or still showing the one they arrived on.
       if (!S.hideGround) {
         const icao = apt.icao;
-        // parked planes barely move, so this is refreshed only every 30 s
-        if (!groundCache || groundCache.icao !== icao || Date.now() - groundCache.t > 30e3) {
+        // refreshed every poll (5 s) so taxiing planes are shown moving along the taxiways
+        if (!groundCache || groundCache.icao !== icao || Date.now() - groundCache.t > 4e3) {
           const g = await fetch(`/api/aircraft?lat=${apt.lat.toFixed(4)}&lon=${apt.lon.toFixed(4)}&dist=3`).then(r => r.ok ? r.json() : null).catch(() => null);
           if (!watchMode() || !apt || apt.icao !== icao) return;
           groundCache = g ? { icao, t: Date.now(), g } : groundCache;
@@ -185,6 +234,7 @@ async function poll() {
         if (g) {
           const hexes = new Set(aircraft.map(a => a.hex));
           for (const a of g.ac) {
+            a._rx = groundCache.t;
             if (a.lat != null && onGround(a) && AIRLINER.test(a.t || '') && !hexes.has(a.hex) &&
                 (a.seen_pos ?? 0) < 120 && distNm(a.lat, a.lon, apt.lat, apt.lon) < 2.5) aircraft.push(a);
           }
@@ -192,7 +242,9 @@ async function poll() {
       }
     } else {
       watchInfo = null;
+      const rx = Date.now();
       aircraft = j.ac.filter(a => a.lat != null && (a.seen_pos ?? 0) < 60);
+      for (const a of aircraft) a._rx = rx;
       nearbyCount = aircraft.length; followedCount = 0;
       // With an airport chosen, add its followed airline flights too, however far away they
       // are. Where a plane is in both lists, the followed copy wins (it has takeoff and ETA).
@@ -311,11 +363,12 @@ function render() {
     let m = markers.get(ac.hex);
     if (!m) {
       m = L.marker([ac.lat, ac.lon], { icon: planeIcon(colorFor(ac), trackOf(ac), false), keyboard: false }).addTo(map);
+      setFix(m, ac); m.setLatLng(placeOf(m, Date.now()));
       m.on('click', () => select(ac.hex));
       m._key = key;
       markers.set(ac.hex, m);
     } else {
-      m.setLatLng([ac.lat, ac.lon]);
+      setFix(m, ac); m.setLatLng(placeOf(m, Date.now()));
       if (m._key !== key) { m.setIcon(planeIcon(colorFor(ac), Math.round(trackOf(ac) / 5) * 5, ac.hex === selected)); m._key = key; }
     }
     const label = csOf(ac) || ac.r || ac.hex;
