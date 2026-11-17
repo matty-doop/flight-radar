@@ -27,7 +27,7 @@ const markers = new Map();      // hex -> L.marker
 const map = L.map('map', { zoomControl: true }).setView([47.6199, -117.5338], 8);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18, className: 'tiles',
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | aircraft: adsb.lol',
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | aircraft: adsb.fi, adsb.lol',
 }).addTo(map);
 const trailLine = L.polyline([], { color: COLORS.sel, weight: 2, opacity: .8 }).addTo(map);
 const pathLayer = L.layerGroup().addTo(map);
@@ -85,6 +85,9 @@ const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
 // ---------- aircraft helpers ----------
 const csOf = ac => (ac.flight || '').trim();
 const onGround = ac => ac.alt_baro === 'ground';
+// Airliner types (not business jets or light aircraft), used to spot airline planes parked
+// at the airport that are not broadcasting a flight number with a published route.
+const AIRLINER = /^(A3[0-8]\d|A[12][01]N|A3[3-9]\w|A38\d|BCS[13]|B7[0-8]\w|B3[789]M|B3XM|B46\w|CRJ[1-9X]|E1[3-9]\d|E2[79]\d|E45X|E7[05][LS]|E17\d|E19\d|DH8[A-D]|AT[47]\d|MD[89]\d|MD1\d|RJ\d\d|SF34|DC\d\d)$/;
 const altOf = ac => onGround(ac) ? 0 : (typeof ac.alt_baro === 'number' ? ac.alt_baro : ac.alt_geom);
 const vsOf = ac => ac.baro_rate ?? ac.geom_rate ?? 0;
 const trackOf = ac => ac.track ?? ac.true_heading ?? ac.mag_heading ?? 0;
@@ -167,7 +170,21 @@ async function poll() {
       if (j.error && !j.flights.length) throw new Error(j.error);
       watchInfo = { tracked: j.tracked, history: j.history };
       aircraft = j.flights.map(f => Object.assign(f.ac, { _w: f }));
-      j.source = j.source || 'adsb.lol';
+      j.source = j.source || 'adsb.fi';
+      // Add airline planes on the ground at the airport that are not (yet) on a followed flight:
+      // parked at the gate with no flight number set, or still showing the one they arrived on.
+      if (!S.hideGround) {
+        const icao = apt.icao;
+        const g = await fetch(`/api/aircraft?lat=${apt.lat.toFixed(4)}&lon=${apt.lon.toFixed(4)}&dist=3`).then(r => r.ok ? r.json() : null).catch(() => null);
+        if (!watchMode() || !apt || apt.icao !== icao) return;
+        if (g) {
+          const hexes = new Set(aircraft.map(a => a.hex));
+          for (const a of g.ac) {
+            if (a.lat != null && onGround(a) && AIRLINER.test(a.t || '') && !hexes.has(a.hex) &&
+                (a.seen_pos ?? 0) < 120 && distNm(a.lat, a.lon, apt.lat, apt.lon) < 2.5) aircraft.push(a);
+          }
+        }
+      }
     } else {
       watchInfo = null;
       aircraft = j.ac.filter(a => a.lat != null && (a.seen_pos ?? 0) < 60);
@@ -197,7 +214,7 @@ async function poll() {
     render();
     if (needFit && aircraft.length) {
       needFit = false;
-      map.fitBounds(L.latLngBounds(aircraft.flatMap(a => [[a.lat, a.lon], [a._w.orig.lat, a._w.orig.lon], [a._w.dest.lat, a._w.dest.lon]])
+      map.fitBounds(L.latLngBounds(aircraft.flatMap(a => a._w ? [[a.lat, a.lon], [a._w.orig.lat, a._w.orig.lon], [a._w.dest.lat, a._w.dest.lon]] : [[a.lat, a.lon]])
         .concat([[apt.lat, apt.lon]])).pad(0.15), { maxZoom: 9, animate: false });
     }
     if (!watching) fetchRoutes();
