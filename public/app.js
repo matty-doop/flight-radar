@@ -5,7 +5,7 @@ const COLORS = { in: '#3ddc84', out: '#ff9f43', other: '#7fb2ff', sel: '#ffe14d'
 
 // ---------- persisted settings ----------
 const saved = (() => { try { return JSON.parse(localStorage.getItem('fr') || '{}'); } catch { return {}; } })();
-const S = Object.assign({ airport: 'KGEG', mode: 'both', range: 100, hideGround: false, airlines: true, collapsed: null, search: '', altMin: '', altMax: '' }, saved);
+const S = Object.assign({ airport: 'KGEG', mode: 'both', range: 100, hideGround: false, selPaths: false, airlines: true, collapsed: null, search: '', altMin: '', altMax: '' }, saved);
 const persist = () => { try { localStorage.setItem('fr', JSON.stringify(S)); } catch {} };
 
 // ---------- state ----------
@@ -54,7 +54,7 @@ function drawPaths(shown) {
   const ends = new Map();
   for (const ac of shown) {
     const w = ac._w;
-    if (!w) continue;
+    if (!w || (S.selPaths && ac.hex !== selected)) continue;
     const sel = ac.hex === selected, color = sel ? COLORS.sel : COLORS[w.dir] || COLORS.other;
     const here = [ac.lat, ac.lon];
     const trail = (w.trail || []).concat([here]);
@@ -287,6 +287,7 @@ function renderSummary() {
   if (watchMode()) parts.push('airlines');
   if (S.search) parts.push(`"${S.search}"`);
   if (S.hideGround) parts.push('no ground');
+  if (S.selPaths) parts.push('one path');
   if (S.altMin !== '' || S.altMax !== '') parts.push('altitude');
   $('filterSummary').textContent = collapsed ? parts.join(' · ') : 'Hide filters';
 }
@@ -439,7 +440,7 @@ function syncMode() {
 }
 
 // ---------- wiring ----------
-$('range').value = S.range; $('search').value = S.search; $('hideGround').checked = S.hideGround;
+$('range').value = S.range; $('search').value = S.search; $('hideGround').checked = S.hideGround; $('selPaths').checked = S.selPaths;
 $('altMin').value = S.altMin; $('altMax').value = S.altMax;
 $('go').onclick = () => setAirport($('airport').value, true);
 $('airport').onkeydown = e => { if (e.key === 'Enter') setAirport($('airport').value, true); };
@@ -449,6 +450,7 @@ $('airlines').checked = S.airlines;
 $('airlines').onchange = e => { S.airlines = e.target.checked; switchSource(); };
 $('search').oninput = e => { S.search = e.target.value.trim(); persist(); render(); };
 $('hideGround').onchange = e => { S.hideGround = e.target.checked; persist(); render(); };
+$('selPaths').onchange = e => { S.selPaths = e.target.checked; persist(); render(); };
 $('altMin').oninput = e => { S.altMin = e.target.value; persist(); render(); };
 $('altMax').oninput = e => { S.altMax = e.target.value; persist(); render(); };
 $('range').onchange = e => { S.range = +e.target.value; persist(); drawAirport(); if (apt) map.fitBounds(rangeRing.getBounds()); poll(); };
