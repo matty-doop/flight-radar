@@ -155,7 +155,7 @@ function queryCentre() {
   return { lat: c.lat, lon: c.lng };
 }
 
-let polling = false;
+let polling = false, groundCache = null;
 async function poll() {
   if (polling || document.hidden) return;
   polling = true;
@@ -175,8 +175,13 @@ async function poll() {
       // parked at the gate with no flight number set, or still showing the one they arrived on.
       if (!S.hideGround) {
         const icao = apt.icao;
-        const g = await fetch(`/api/aircraft?lat=${apt.lat.toFixed(4)}&lon=${apt.lon.toFixed(4)}&dist=3`).then(r => r.ok ? r.json() : null).catch(() => null);
-        if (!watchMode() || !apt || apt.icao !== icao) return;
+        // parked planes barely move, so this is refreshed only every 30 s
+        if (!groundCache || groundCache.icao !== icao || Date.now() - groundCache.t > 30e3) {
+          const g = await fetch(`/api/aircraft?lat=${apt.lat.toFixed(4)}&lon=${apt.lon.toFixed(4)}&dist=3`).then(r => r.ok ? r.json() : null).catch(() => null);
+          if (!watchMode() || !apt || apt.icao !== icao) return;
+          groundCache = g ? { icao, t: Date.now(), g } : groundCache;
+        }
+        const g = groundCache && groundCache.icao === icao ? groundCache.g : null;
         if (g) {
           const hexes = new Set(aircraft.map(a => a.hex));
           for (const a of g.ac) {

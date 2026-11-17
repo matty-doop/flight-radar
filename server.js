@@ -61,10 +61,10 @@ async function getJson(url, timeoutMs = 12000) {
 // a day without a key, so it is the backup. A source that says "too many requests" is left
 // alone until it says it will accept requests again.
 const LIVE = [
-  { name: 'adsb.fi', gap: 1100, nextAt: 0, blockedUntil: 0,
+  { name: 'adsb.fi', gap: 1100, nextAt: 0, blockedUntil: 0, backoff: 0, lastError: null,
     point: (lat, lon, d) => `https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/${d}`,
     callsign: list => `https://opendata.adsb.fi/api/v2/callsign/${list}` },
-  { name: 'adsb.lol', gap: 1100, nextAt: 0, blockedUntil: 0,
+  { name: 'adsb.lol', gap: 1100, nextAt: 0, blockedUntil: 0, backoff: 0, lastError: null,
     point: (lat, lon, d) => `https://api.adsb.lol/v2/point/${lat}/${lon}/${d}`,
     callsign: list => `https://api.adsb.lol/v2/callsign/${list}` },
 ];
@@ -79,16 +79,20 @@ async function liveFetch(kind, ...args) {
     if (wait) await sleep(wait);
     try {
       const j = await getJson(src[kind](...args));
+      src.backoff = 0;
       return { source: src.name, j: j || {} };
     } catch (e) {
       lastErr = e;
+      src.lastError = { at: new Date().toISOString(), msg: String(e.message || e) };
       if (e.status === 429) {
+        // rest it for as long as it asks; if it doesn't say, start short and double each time
         const h = e.headers;
-        const secs = Number(h && (h.get('retry-after') || h.get('x-ratelimit-reset'))) || 300;
+        src.backoff = Math.min(Math.max(src.backoff * 2, 10), 120);
+        const secs = Number(h && (h.get('retry-after') || h.get('x-ratelimit-reset'))) || src.backoff;
         src.blockedUntil = Date.now() + Math.min(secs, 86400) * 1000;
-        console.log(`${src.name} says too many requests; resting it for ${Math.round(Math.min(secs, 86400) / 60)} min`);
+        console.log(`${src.name} says too many requests; resting it for ${Math.round(Math.min(secs, 86400))} s`);
       } else {
-        src.blockedUntil = Date.now() + 30e3;
+        src.blockedUntil = Date.now() + 3e3; // a hiccup (timeout, server error): try again shortly
       }
     }
   }
@@ -234,7 +238,9 @@ function loadRoutesText() {
 
 const watchers = new Map();    // icao -> watcher
 const flightState = new Map(); // callsign -> {leg, phase, takeoff, takeoffEst, landed, seen}
-const MAX_WATCHERS = 3, CHUNK = 80, WATCH_MS = 10000;
+// Each poll asks for up to CHUNK flight numbers in one request: first every flight already being
+// followed (so positions stay fresh), then the next slice of the rest, to spot new departures.
+const MAX_WATCHERS = 3, CHUNK = 250, WATCH_MS = 5000;
 
 async function ensureWatcher(icao) {
   let w = watchers.get(icao);
@@ -262,9 +268,15 @@ async function ensureWatcher(icao) {
 
 async function pollWatcher(w) {
   if (!w.list.length) return;
-  if (w.cursor >= w.list.length) w.cursor = 0;
-  const chunk = w.list.slice(w.cursor, w.cursor + CHUNK);
-  w.cursor += CHUNK;
+  const active = [...w.flights.keys()].slice(0, CHUNK - 20).map(cs => w.byCs.get(cs)).filter(Boolean);
+  const want = new Set(active.map(r => r.cs));
+  const chunk = active.slice();
+  for (let n = 0; n < w.list.length && chunk.length < CHUNK; n++) {
+    if (w.cursor >= w.list.length) w.cursor = 0;
+    const r = w.list[w.cursor++];
+    if (!want.has(r.cs)) { want.add(r.cs); chunk.push(r); }
+  }
+  w.scanEvery = Math.ceil(w.list.length / Math.max(20, CHUNK - active.length)) * WATCH_MS;
   try {
     const { source, j } = await liveFetch('callsign', chunk.map(r => r.cs).join(','));
     w.error = null; w.source = source;
@@ -276,7 +288,7 @@ async function pollWatcher(w) {
       if (f) w.flights.set(cs, f); else w.flights.delete(cs);
       if (f && f.phase === 'air') fetchHistory(ac.hex, cs, route);
     }
-    const maxAge = Math.max(90e3, Math.ceil(w.list.length / CHUNK) * WATCH_MS * 2.5);
+    const maxAge = 90e3; // followed flights are re-checked every poll, so 90 s unseen means gone
     for (const [cs, f] of w.flights) if (now - f.t > maxAge) w.flights.delete(cs);
   } catch (e) { w.error = String(e.message || e); }
 }
@@ -444,7 +456,7 @@ http.createServer(async (req, res) => {
       if (!/^[A-Z0-9]{3,4}$/.test(code)) return send(res, 400, { error: 'bad code' });
       const w = await ensureWatcher(code);
       if (!w) return send(res, 404, { error: 'unknown airport' });
-      return send(res, 200, { airport: w.icao, tracked: w.list.length, source: w.source, error: w.error, history: history.status, flights: [...w.flights.values()].filter(f => f.dir) });
+      return send(res, 200, { airport: w.icao, tracked: w.list.length, scanSecs: Math.round((w.scanEvery || 0) / 1000), source: w.source, error: w.error, history: history.status, flights: [...w.flights.values()].filter(f => f.dir) });
     }
     if (url.pathname.startsWith('/api/airport/')) {
       const code = url.pathname.split('/')[3].toUpperCase();
