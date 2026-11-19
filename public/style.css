@@ -74,3 +74,7 @@ select:disabled, input:disabled { opacity: .45; }
 
 .leaflet-tooltip.cslabel.in { background: var(--in); color: #10141a; font-weight: 600; }
 .leaflet-tooltip.cslabel.out { background: var(--out); color: #10141a; font-weight: 600; }
+body.noside #side { display: none; }
+body.noside #map { height: 100%; flex: 1; }
+.sidebtn { display: block; width: 34px; height: 34px; line-height: 32px; text-align: center; font-size: 18px; background: #fff; color: #333; text-decoration: none; cursor: pointer; }
+.sidebtn:hover { background: #f4f4f4; color: #000; }

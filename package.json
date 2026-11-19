@@ -1,6 +1,6 @@
 {
   "name": "flight-radar",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "private": true,
   "description": "Personal flight tracker using free community ADS-B data",
   "author": "matty-doop",

@@ -29,6 +29,33 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18, className: 'tiles',
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | aircraft: adsb.fi, adsb.lol',
 }).addTo(map);
+
+// button on the map that hides or shows the side panel
+const SideToggle = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const b = L.DomUtil.create('a', 'leaflet-bar sidebtn');
+    b.href = '#'; b.setAttribute('role', 'button');
+    L.DomEvent.disableClickPropagation(b);
+    L.DomEvent.on(b, 'click', e => { L.DomEvent.preventDefault(e); setSide(!S.sideHidden); });
+    this._b = b;
+    return b;
+  },
+});
+const sideToggle = new SideToggle();
+map.addControl(sideToggle);
+sideToggle.getContainer().parentNode.prepend(sideToggle.getContainer()); // above the zoom buttons
+function setSide(hidden) {
+  S.sideHidden = hidden; persist();
+  document.body.classList.toggle('noside', hidden);
+  const b = sideToggle._b;
+  b.textContent = hidden ? '☰' : '«';
+  b.title = hidden ? 'Show panel' : 'Hide panel';
+  b.setAttribute('aria-label', b.title);
+  map.invalidateSize();
+}
+setSide(!!S.sideHidden);
+
 const trailLine = L.polyline([], { color: COLORS.sel, weight: 2, opacity: .8 }).addTo(map);
 const pathLayer = L.layerGroup().addTo(map);
 let aptMarker = null, rangeRing = null;
