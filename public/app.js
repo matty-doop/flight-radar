@@ -25,10 +25,29 @@ const markers = new Map();      // hex -> L.marker
 
 // ---------- map ----------
 const map = L.map('map', { zoomControl: true }).setView([47.6199, -117.5338], 8);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 18, className: 'tiles',
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | aircraft: adsb.fi, adsb.lol',
-}).addTo(map);
+// Base map. "Normal" is OpenStreetMap (darkened), whose place names are baked into the
+// pictures. "Faint" and "Off" use Esri's dark gray map, which keeps the names on a
+// separate layer that can be dimmed or left out.
+const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const AC_ATTR = ' | aircraft: adsb.fi, adsb.lol';
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
+const baseMaps = {
+  osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18, className: 'tiles', attribution: OSM_ATTR + AC_ATTR }),
+  dark: L.tileLayer(ESRI + 'World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 18, maxNativeZoom: 16,
+    attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a> &mdash; Esri, HERE, Garmin, ' + OSM_ATTR + AC_ATTR }),
+};
+const labelLayer = L.tileLayer(ESRI + 'World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 18, maxNativeZoom: 16, opacity: .45 });
+function setLabels(v) {
+  S.labels = v; persist();
+  const base = v === 'normal' ? baseMaps.osm : baseMaps.dark;
+  for (const l of Object.values(baseMaps)) if (l !== base && map.hasLayer(l)) map.removeLayer(l);
+  if (!map.hasLayer(base)) base.addTo(map);
+  if (v === 'faint') labelLayer.addTo(map); else labelLayer.remove();
+}
+setLabels(['normal', 'faint', 'off'].includes(S.labels) ? S.labels : 'normal');
 
 // button on the map that hides or shows the side panel
 const SideToggle = L.Control.extend({
@@ -527,7 +546,7 @@ function syncMode() {
 }
 
 // ---------- wiring ----------
-$('range').value = S.range; $('search').value = S.search; $('hideGround').checked = S.hideGround; $('selPaths').checked = S.selPaths;
+$('range').value = S.range; $('search').value = S.search; $('hideGround').checked = S.hideGround; $('selPaths').checked = S.selPaths; $('labels').value = S.labels;
 $('altMin').value = S.altMin; $('altMax').value = S.altMax;
 $('go').onclick = () => setAirport($('airport').value, true);
 $('airport').onkeydown = e => { if (e.key === 'Enter') setAirport($('airport').value, true); };
@@ -537,6 +556,7 @@ $('airlines').checked = S.airlines;
 $('airlines').onchange = e => { S.airlines = e.target.checked; switchSource(); };
 $('search').oninput = e => { S.search = e.target.value.trim(); persist(); render(); };
 $('hideGround').onchange = e => { S.hideGround = e.target.checked; persist(); render(); };
+$('labels').onchange = e => setLabels(e.target.value);
 $('selPaths').onchange = e => { S.selPaths = e.target.checked; persist(); render(); };
 $('altMin').oninput = e => { S.altMin = e.target.value; persist(); render(); };
 $('altMax').oninput = e => { S.altMax = e.target.value; persist(); render(); };
