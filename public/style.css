@@ -81,3 +81,6 @@ body.noside #map { height: 100%; flex: 1; }
 .radarbtn { font-size: 17px; }
 .radarbtn.on { background: #2b7de9; color: #fff; }
 .radarbtn.on:hover { background: #1f6ad0; color: #fff; }
+.radarctl { display: flex; align-items: center; gap: 8px; }
+.radarop { display: none; width: 110px; accent-color: #2b7de9; background: rgba(18,22,28,.75); border-radius: 12px; padding: 6px 8px; }
+.radarctl.on .radarop { display: block; }

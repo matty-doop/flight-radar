@@ -79,7 +79,7 @@ function showRadar() {
   if (radar.layer && radar.src === src) { if (radar.url !== url) radar.layer.setUrl(url); }
   else {
     if (radar.layer) radar.layer.remove();
-    radar.layer = L.tileLayer(url, { opacity: .6, maxZoom: 18, zIndex: 5, ...opts }).addTo(map);
+    radar.layer = L.tileLayer(url, { opacity: S.radarOpacity ?? .6, maxZoom: 18, zIndex: 5, ...opts }).addTo(map);
   }
   radar.src = src; radar.url = url;
   updateRadarBtn();
@@ -95,17 +95,31 @@ function setRadar(on) {
 const RadarToggle = L.Control.extend({
   options: { position: 'topleft' },
   onAdd() {
-    const b = L.DomUtil.create('a', 'leaflet-bar sidebtn radarbtn');
+    const box = L.DomUtil.create('div', 'radarctl');
+    const b = L.DomUtil.create('a', 'leaflet-bar sidebtn radarbtn', box);
     b.href = '#'; b.setAttribute('role', 'button'); b.textContent = '☂';
-    L.DomEvent.disableClickPropagation(b);
+    // opacity slider, shown beside the button while the radar is on
+    const r = L.DomUtil.create('input', 'radarop', box);
+    r.type = 'range'; r.min = 10; r.max = 100; r.step = 5;
+    r.value = Math.round((S.radarOpacity ?? .6) * 100);
+    r.title = 'Radar opacity'; r.setAttribute('aria-label', 'Radar opacity');
+    L.DomEvent.disableClickPropagation(box);
+    L.DomEvent.disableScrollPropagation(box);
     L.DomEvent.on(b, 'click', e => { L.DomEvent.preventDefault(e); setRadar(!S.radar); });
-    return b;
+    L.DomEvent.on(r, 'input', () => {
+      S.radarOpacity = r.value / 100;
+      if (radar.layer) radar.layer.setOpacity(S.radarOpacity);
+    });
+    L.DomEvent.on(r, 'change', persist);
+    this._b = b;
+    return box;
   },
 });
 const radarToggle = new RadarToggle();
 map.addControl(radarToggle);
 function updateRadarBtn() {
-  const b = radarToggle.getContainer();
+  const b = radarToggle._b;
+  radarToggle.getContainer().classList.toggle('on', !!S.radar);
   b.classList.toggle('on', !!S.radar);
   const at = radar.time ? ` (as of ${new Date(radar.time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '';
   b.title = S.radar ? `Hide weather radar${radar.src ? ' — ' + radar.src : ''}${at}` : 'Show weather radar';
