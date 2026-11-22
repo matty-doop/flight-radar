@@ -45,16 +45,29 @@ function saveCacheSoon() {
   }, 5000);
 }
 
-// Weather radar frame list from RainViewer (free, no key). Cached for 2 minutes.
+// Weather radar: RainViewer (worldwide, free, no key) and the US National Weather Service
+// composite via Iowa State's Mesonet. Only the newest frame time is looked up here; the
+// browser loads the map tiles directly. Cached for 2 minutes.
 let radarCache = { t: 0, data: null };
 async function getRadar() {
   if (radarCache.data && Date.now() - radarCache.t < 120e3) return radarCache.data;
-  const j = await getJson('https://api.rainviewer.com/public/weather-maps.json');
-  const past = (j.radar && j.radar.past) || [];
-  const last = past[past.length - 1];
-  if (!last || !/^\/v2\/radar\/\w+$/.test(last.path) || !/^https:\/\/[\w.-]+\.rainviewer\.com$/.test(j.host)) throw new Error('no radar frames');
-  radarCache = { t: Date.now(), data: { host: j.host, path: last.path, time: last.time } };
-  return radarCache.data;
+  const [rv, nws] = await Promise.allSettled([
+    getJson('https://api.rainviewer.com/public/weather-maps.json'),
+    getJson('https://mesonet.agron.iastate.edu/data/gis/images/4326/USCOMP/n0q_0.json'),
+  ]);
+  const data = {};
+  if (rv.status === 'fulfilled') {
+    const j = rv.value, past = (j.radar && j.radar.past) || [], last = past[past.length - 1];
+    if (last && /^\/v2\/radar\/\w+$/.test(last.path) && /^https:\/\/[\w.-]+\.rainviewer\.com$/.test(j.host))
+      data.world = { host: j.host, path: last.path, time: last.time };
+  }
+  if (nws.status === 'fulfilled') {
+    const t = Date.parse(nws.value.meta && nws.value.meta.valid);
+    data.us = { time: isFinite(t) ? Math.round(t / 1000) : Math.round(Date.now() / 1000) };
+  } else data.us = { time: 0 };
+  if (!data.world && !data.us.time && nws.status !== 'fulfilled') throw new Error('no radar frames');
+  radarCache = { t: Date.now(), data };
+  return data;
 }
 
 async function getJson(url, timeoutMs = 12000) {
@@ -434,7 +447,7 @@ try {
 
 // ---------- http ----------
 // The page may only run code that ships with the app, and only load map tiles from OpenStreetMap.
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org https://server.arcgisonline.com https://tilecache.rainviewer.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org https://server.arcgisonline.com https://tilecache.rainviewer.com https://mesonet.agron.iastate.edu; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 function send(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

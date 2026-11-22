@@ -49,25 +49,47 @@ function setLabels(v) {
 }
 setLabels(['normal', 'faint', 'off'].includes(S.labels) ? S.labels : 'normal');
 
-// Weather radar overlay (RainViewer). Their free tiles go up to zoom 7 and are enlarged
-// beyond that. The newest frame is fetched every 5 minutes while the layer is on.
-const radar = { layer: null, timer: null, time: 0 };
+// Weather radar overlay. Over the lower 48 it uses the National Weather Service composite
+// (via Iowa State's Mesonet), which is sharp down to airport level; elsewhere RainViewer,
+// whose free tiles stop at zoom 7 and are enlarged beyond that. The newest frame is
+// fetched every 5 minutes while the layer is on.
+const US_BOX = L.latLngBounds([20, -130], [53, -60]);
+const radar = { layer: null, src: '', url: '', info: null, timer: null, time: 0 };
 async function loadRadar() {
   try {
     const r = await fetch('api/radar').then(x => x.ok ? x.json() : null);
-    if (!r || !S.radar) return;
-    const url = `${r.host}${r.path}/256/{z}/{x}/{y}/2/1_1.png`;
-    if (radar.layer) { if (radar.layer._url !== url) radar.layer.setUrl(url); }
-    else radar.layer = L.tileLayer(url, { opacity: .6, maxNativeZoom: 7, maxZoom: 18, zIndex: 5,
-      attribution: 'radar: <a href="https://www.rainviewer.com">RainViewer</a>' }).addTo(map);
-    radar.time = r.time; updateRadarBtn();
+    if (r && S.radar) { radar.info = r; showRadar(); }
   } catch {}
 }
+function showRadar() {
+  const r = radar.info;
+  if (!S.radar || !r) return;
+  const useUS = US_BOX.contains(map.getCenter()) && r.us;
+  let url, opts;
+  if (useUS) {
+    // the time in the address makes browsers fetch fresh tiles after each update
+    url = `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?t=${r.us.time || Math.floor(Date.now() / 300e3)}`;
+    opts = { maxNativeZoom: 12, attribution: 'radar: NWS via <a href="https://mesonet.agron.iastate.edu">Iowa Mesonet</a>' };
+  } else if (r.world) {
+    url = `${r.world.host}${r.world.path}/256/{z}/{x}/{y}/2/1_1.png`;
+    opts = { maxNativeZoom: 7, attribution: 'radar: <a href="https://www.rainviewer.com">RainViewer</a>' };
+  } else return;
+  const src = useUS ? 'NWS' : 'RainViewer';
+  radar.time = useUS ? r.us.time : r.world.time;
+  if (radar.layer && radar.src === src) { if (radar.url !== url) radar.layer.setUrl(url); }
+  else {
+    if (radar.layer) radar.layer.remove();
+    radar.layer = L.tileLayer(url, { opacity: .6, maxZoom: 18, zIndex: 5, ...opts }).addTo(map);
+  }
+  radar.src = src; radar.url = url;
+  updateRadarBtn();
+}
+map.on('moveend', showRadar);
 function setRadar(on) {
   S.radar = on; persist();
   clearInterval(radar.timer);
   if (on) { loadRadar(); radar.timer = setInterval(loadRadar, 300e3); }
-  else if (radar.layer) { radar.layer.remove(); radar.layer = null; }
+  else if (radar.layer) { radar.layer.remove(); radar.layer = null; radar.src = ''; }
   updateRadarBtn();
 }
 const RadarToggle = L.Control.extend({
@@ -86,7 +108,7 @@ function updateRadarBtn() {
   const b = radarToggle.getContainer();
   b.classList.toggle('on', !!S.radar);
   const at = radar.time ? ` (as of ${new Date(radar.time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '';
-  b.title = S.radar ? `Hide weather radar${at}` : 'Show weather radar';
+  b.title = S.radar ? `Hide weather radar${radar.src ? ' — ' + radar.src : ''}${at}` : 'Show weather radar';
   b.setAttribute('aria-label', b.title);
 }
 setRadar(!!S.radar);
