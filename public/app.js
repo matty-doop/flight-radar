@@ -347,12 +347,50 @@ async function fetchRoutes() {
 }
 
 // ---------- rendering ----------
-function planeIcon(color, rot, big) {
-  const s = big ? 30 : 22;
+// Marker shape and size by aircraft type (ADS-B type code, falling back to the emitter category)
+const JET_PATH = 'M12 1.5c.9 0 1.5 1 1.5 2.4V9l8 4.6v2.1l-8-2.5v5l2.4 1.8v1.6L12 20.6l-3.9 1v-1.6l2.4-1.8v-5l-8 2.5v-2.1l8-4.6V3.9c0-1.4.6-2.4 1.5-2.4z';
+const SHAPES = {
+  jet: JET_PATH,
+  heavy: 'M12 .6c1 0 1.7 1.1 1.7 2.7v5.1l9.6 5.4v2.4l-9.6-3v5.5l2.8 2v1.7L12 21.5l-4.5.9v-1.7l2.8-2v-5.5l-9.6 3v-2.4l9.6-5.4V3.3C10.3 1.7 11 .6 12 .6z' +
+         'M5.9 9.6h1.5v2.6H5.9zM16.6 9.6h1.5v2.6h-1.5z',
+  biz: 'M12 2c.8 0 1.3.9 1.3 2.2v5.6l6.8 4.3v1.7l-6.8-2v3.6l3 2.1v1.4L12 20l-4.3.9v-1.4l3-2.1v-3.6l-6.8 2v-1.7l6.8-4.3V4.2C10.7 2.9 11.2 2 12 2z',
+  prop: 'M12 2c.8 0 1.2.9 1.2 2.2v4.3l9.3.3v2.4l-9.3.7v5.7l3 1v1.6l-4.2.4-4.2-.4v-1.6l3-1v-5.7l-9.3-.7V8.8l9.3-.3V4.2C10.8 2.9 11.2 2 12 2z' +
+        'M6.2 6.9h1.4v2H6.2zM16.4 6.9h1.4v2h-1.4z',
+  light: 'M12 3c.7 0 1.1.8 1.1 1.9V8l9.4.2v2.3l-9.4.5v6.2l2.8.8v1.5L12 19.8l-3.9-.3V18l2.8-.8V11l-9.4-.5V8.2l9.4-.2V4.9C10.9 3.8 11.3 3 12 3z',
+  heli: 'M12 6.4c1.9 0 3.2 1.9 3.2 4.4s-1.3 4.3-3.2 4.3-3.2-1.8-3.2-4.3 1.3-4.4 3.2-4.4z' +
+        'M11.3 14.5h1.4v6.4h-1.4zM9.6 20.2h4.8v1.3H9.6z' +
+        'M3.4 2.6l.9-.9 16.3 16.3-.9.9zM20.6 2.6l-.9-.9L3.4 18l.9.9z',
+};
+const SIZES = { heavy: 32, jet: 24, regional: 21, propliner: 21, biz: 19, prop: 18, light: 15, heli: 19 };
+const HEAVY = /^(A30\w|A310|A33\w|A34\w|A35\w|A38\w|B74\w|B76\w|B77\w|B78\w|B79\w|MD11|DC10|L101|IL96|IL76|C17|C5M?|KC10|K35R|KC46|A400|A124|AN12|AN22|B52|E3TF|E3CF|BLCF|A3ST)$/;
+const REGIONAL = /^(CRJ\w|E1[3-9]\d|E17\d|E19\d|E7[05][LS]|E2[79]\d|E45X|RJ\d\d|B46\w|F70|F100|BCS1)$/;
+const PROPLINER = /^(DH8\w|AT[4-7]\w|SF34|SB20|E120|F50|D328|J328|JS41|SW4)$/;
+const PROP = /^(B190|BE20|BE30|B350|BE9L|BE9T|BE99|BE10|PC12|C208|C30J|C130|DHC6|DHC7|L410|PAY\w|P180|TBM\w|M600|PA46|P46T|C441|C425|AN2\d|AN3\d|Y12|DO28|CN35|C295|BN2\w|AC\d\w|MU2|KODI|PC6T|C406|JS3\d)$/;
+const HELI = /^(H47|H53|H60|H64|H500|H269|EC\d\d\w?|AS\d\d\w?|R22|R44|R66|B06|B06T|B407|B412|B429|B505|B212|B222|B230|BK17|A109|A119|A139|A169|A189|AW\d+|S76|S92|UH\d+|MD52|MD60|MD90|EXPL|EH10|NH90|CH\d+|AH\d+|S61|S64|K32|MI8|MI17|G2CA|ALO\d|R300|EN\d\d|H160|H135|H145|H125|H130|H155|H175|H215|H225)$/;
+const BIZ = /^(C25\w|C5\d\w|C56X|C68A|C700|C750|C510|C501|CL30|CL35|CL60|GL\w\w|GLF\d|GA\dC|G150|G280|LJ\d\d|FA\d\w|F2TH|F900|E50P|E55P|E545|E550|H25\w|HDJT|PC24|BE40|PRM1|SF50|EA50|ASTR|WW24|GALX)$/;
+const LIGHT = /^(C1[5-9]\d|C2[01]\d|C17\w|C18\w|P28\w|PA\d\d|SR2\d|DA\d\w|M20\w|BE3[356]|BE23|BE76|BE55|BE58|C310|C340|AA5|RV\d+|GLID|ULAC|J3|CH7A|DV20|TB\d\d|P32R|S22T|AMPH|BL8|SIRA|PA\w\w)$/;
+function kindOf(ac) {
+  const t = ac.t || '', cat = ac.category || '';
+  if (HELI.test(t) || cat === 'A7') return 'heli';
+  if (HEAVY.test(t)) return 'heavy';
+  if (REGIONAL.test(t)) return 'regional';
+  if (PROPLINER.test(t)) return 'propliner';
+  if (PROP.test(t)) return 'prop';
+  if (BIZ.test(t)) return 'biz';
+  if (LIGHT.test(t)) return 'light';
+  if (AIRLINER.test(t)) return 'jet';
+  if (cat === 'A5') return 'heavy';
+  if (cat === 'A1' || cat === 'B1' || cat === 'B4') return 'light';
+  if (cat === 'A2') return 'biz';
+  return 'jet';
+}
+function planeIcon(color, rot, big, kind = 'jet') {
+  const shape = SHAPES[kind] || (kind === 'propliner' ? SHAPES.prop : SHAPES.jet);
+  const s = Math.round((SIZES[kind] || 22) * (big ? 1.3 : 1));
   return L.divIcon({
     className: '', iconSize: [s, s], iconAnchor: [s / 2, s / 2],
     html: `<svg class="plane" width="${s}" height="${s}" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)">
-      <path fill="${color}" stroke="#0b0e12" stroke-width=".8" d="M12 1.5c.9 0 1.5 1 1.5 2.4V9l8 4.6v2.1l-8-2.5v5l2.4 1.8v1.6L12 20.6l-3.9 1v-1.6l2.4-1.8v-5l-8 2.5v-2.1l8-4.6V3.9c0-1.4.6-2.4 1.5-2.4z"/></svg>`,
+      <path fill="${color}" stroke="#0b0e12" stroke-width="${(.8 * 24 / s).toFixed(2)}" d="${shape}"/></svg>`,
   });
 }
 
@@ -407,17 +445,18 @@ function render() {
   const live = new Set();
   for (const ac of shown) {
     live.add(ac.hex);
-    const key = `${colorFor(ac)}|${Math.round(trackOf(ac) / 5) * 5}|${ac.hex === selected}`;
+    const kind = kindOf(ac);
+    const key = `${colorFor(ac)}|${Math.round(trackOf(ac) / 5) * 5}|${ac.hex === selected}|${kind}`;
     let m = markers.get(ac.hex);
     if (!m) {
-      m = L.marker([ac.lat, ac.lon], { icon: planeIcon(colorFor(ac), trackOf(ac), false), keyboard: false }).addTo(map);
+      m = L.marker([ac.lat, ac.lon], { icon: planeIcon(colorFor(ac), trackOf(ac), false, kind), keyboard: false }).addTo(map);
       setFix(m, ac); m.setLatLng(placeOf(m, Date.now()));
       m.on('click', () => select(ac.hex));
       m._key = key;
       markers.set(ac.hex, m);
     } else {
       setFix(m, ac); m.setLatLng(placeOf(m, Date.now()));
-      if (m._key !== key) { m.setIcon(planeIcon(colorFor(ac), Math.round(trackOf(ac) / 5) * 5, ac.hex === selected)); m._key = key; }
+      if (m._key !== key) { m.setIcon(planeIcon(colorFor(ac), Math.round(trackOf(ac) / 5) * 5, ac.hex === selected, kind)); m._key = key; }
     }
     const label = csOf(ac) || ac.r || ac.hex;
     const dir = ac._c ? ac._c.dir : '';
