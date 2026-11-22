@@ -49,6 +49,48 @@ function setLabels(v) {
 }
 setLabels(['normal', 'faint', 'off'].includes(S.labels) ? S.labels : 'normal');
 
+// Weather radar overlay (RainViewer). Their free tiles go up to zoom 7 and are enlarged
+// beyond that. The newest frame is fetched every 5 minutes while the layer is on.
+const radar = { layer: null, timer: null, time: 0 };
+async function loadRadar() {
+  try {
+    const r = await fetch('api/radar').then(x => x.ok ? x.json() : null);
+    if (!r || !S.radar) return;
+    const url = `${r.host}${r.path}/256/{z}/{x}/{y}/2/1_1.png`;
+    if (radar.layer) { if (radar.layer._url !== url) radar.layer.setUrl(url); }
+    else radar.layer = L.tileLayer(url, { opacity: .6, maxNativeZoom: 7, maxZoom: 18, zIndex: 5,
+      attribution: 'radar: <a href="https://www.rainviewer.com">RainViewer</a>' }).addTo(map);
+    radar.time = r.time; updateRadarBtn();
+  } catch {}
+}
+function setRadar(on) {
+  S.radar = on; persist();
+  clearInterval(radar.timer);
+  if (on) { loadRadar(); radar.timer = setInterval(loadRadar, 300e3); }
+  else if (radar.layer) { radar.layer.remove(); radar.layer = null; }
+  updateRadarBtn();
+}
+const RadarToggle = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const b = L.DomUtil.create('a', 'leaflet-bar sidebtn radarbtn');
+    b.href = '#'; b.setAttribute('role', 'button'); b.textContent = '☂';
+    L.DomEvent.disableClickPropagation(b);
+    L.DomEvent.on(b, 'click', e => { L.DomEvent.preventDefault(e); setRadar(!S.radar); });
+    return b;
+  },
+});
+const radarToggle = new RadarToggle();
+map.addControl(radarToggle);
+function updateRadarBtn() {
+  const b = radarToggle.getContainer();
+  b.classList.toggle('on', !!S.radar);
+  const at = radar.time ? ` (as of ${new Date(radar.time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '';
+  b.title = S.radar ? `Hide weather radar${at}` : 'Show weather radar';
+  b.setAttribute('aria-label', b.title);
+}
+setRadar(!!S.radar);
+
 // button on the map that hides or shows the side panel
 const SideToggle = L.Control.extend({
   options: { position: 'topleft' },

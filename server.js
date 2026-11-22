@@ -45,6 +45,18 @@ function saveCacheSoon() {
   }, 5000);
 }
 
+// Weather radar frame list from RainViewer (free, no key). Cached for 2 minutes.
+let radarCache = { t: 0, data: null };
+async function getRadar() {
+  if (radarCache.data && Date.now() - radarCache.t < 120e3) return radarCache.data;
+  const j = await getJson('https://api.rainviewer.com/public/weather-maps.json');
+  const past = (j.radar && j.radar.past) || [];
+  const last = past[past.length - 1];
+  if (!last || !/^\/v2\/radar\/\w+$/.test(last.path) || !/^https:\/\/[\w.-]+\.rainviewer\.com$/.test(j.host)) throw new Error('no radar frames');
+  radarCache = { t: Date.now(), data: { host: j.host, path: last.path, time: last.time } };
+  return radarCache.data;
+}
+
 async function getJson(url, timeoutMs = 12000) {
   const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(timeoutMs) });
   if (res.status === 404) return null;
@@ -422,7 +434,7 @@ try {
 
 // ---------- http ----------
 // The page may only run code that ships with the app, and only load map tiles from OpenStreetMap.
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org https://server.arcgisonline.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org https://server.arcgisonline.com https://tilecache.rainviewer.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 function send(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -458,6 +470,7 @@ http.createServer(async (req, res) => {
       if (!w) return send(res, 404, { error: 'unknown airport' });
       return send(res, 200, { airport: w.icao, tracked: w.list.length, scanSecs: Math.round((w.scanEvery || 0) / 1000), source: w.source, error: w.error, history: history.status, flights: [...w.flights.values()].filter(f => f.dir) });
     }
+    if (url.pathname === '/api/radar') return send(res, 200, await getRadar());
     if (url.pathname.startsWith('/api/airport/')) {
       const code = url.pathname.split('/')[3].toUpperCase();
       if (!/^[A-Z0-9]{3,4}$/.test(code)) return send(res, 400, { error: 'bad code' });
